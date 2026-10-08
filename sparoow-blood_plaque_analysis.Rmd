@@ -1,0 +1,79 @@
+---
+title: "sparrow-blood_plaque_analysis"
+output: html_document
+date: "2026-06-03"
+---
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(tidyverse)
+library(stringdist)
+```
+
+## Clean the data by 2x rate in negative sample
+```{r}
+
+# import the csv file
+df <- read.csv('sparrow-blood_plaque.csv')
+
+# clean samples with a cutoff criteria: minimum count of 2 or > 2 x rate in the background
+rate_cleaned <- df %>%
+  filter(type == "neg") %>%                       # only 'neg' samples
+  group_by(bird, dpi, sequence) %>%               # group by unique sequence
+  summarise(rate = sum(count) / n_distinct(number), .groups = "drop") %>% # 'neg' rate
+  mutate(cutoff = 2 * rate) %>%                                           # cutoff = 2x rate
+  right_join(
+    df %>% filter(type == "pos"),
+    by = c("bird", "dpi", "sequence")             # apply matching neg per bird and dpi
+  ) %>%
+  filter(count >= cutoff | (is.na(cutoff) & count >= 2)) %>% 
+  group_by(bird, dpi, type, number) %>%
+  mutate(total=sum(count)) %>%
+  filter(total > 500)     # remove samples with poor quality (mis-pick or PCR failure)
+```
+
+
+## Merge sequences that are 1nt away from the top sequence of each plaque
+```{r}
+
+# merged 
+df_collapsed <- rate_cleaned %>%
+  group_by(bird, dpi, type, number) %>%                    # group by sample ID
+  mutate(top_seq      = sequence[which.max(count)],        # most abundant sequence
+         dist_to_top  = stringdist(sequence, top_seq, method = "hamming"),  # hamming distance
+         sequence_norm = if_else(dist_to_top == 1L, top_seq, sequence)) %>% # remove if 1 away
+  ungroup() %>%                                                         
+  group_by(bird, dpi, type, number, sequence = sequence_norm) %>%  # re-group
+  summarise(count = sum(count), .groups = "drop") %>%
+  arrange(bird, dpi, type, number, desc(count))
+```
+
+
+## Number of unique barcodes per sample
+```{r}
+
+# summary table showing the number of unique barcode per sample
+unique <- df_collapsed %>%
+  group_by(bird, dpi, type, number) %>%    # group by sample ID
+  summarise(n()) %>%                       # length = number of different barcode sequence
+  ungroup()
+
+# export into a csv file
+write.csv(unique, 'unique_barcodes.csv')
+```
+
+## Percentage of each barcode within a plaque
+```{r}
+
+# data frame with percentage column
+percent <-df_collapsed %>%
+  group_by(bird, dpi, type, number) %>%
+  mutate(total = sum(count)) %>%
+  mutate(percent = 100*count/total) %>%
+  ungroup()
+
+# write into a csv file
+write.csv(percent, 'percent.csv')
+```
+

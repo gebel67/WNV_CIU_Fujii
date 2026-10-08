@@ -1,0 +1,145 @@
+---
+title: "260520_designing_mutation"
+output: html_document
+date: "2026-05-20"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(seqinr)
+```
+
+## Dataframe containing original sequence and nucleotide position
+```{r cars}
+# read WNV sequence into data frame
+seq <- read.csv('WNV_NY99.csv')
+# vector containing each nucleotide as a element or 'original nucleotide' sequence
+original <- strsplit(as.character(seq[1,1]), "")[[1]]
+# vector containing number from 1 to 11029
+position <- 1:11029
+# data frame containing position and sequence
+WNV <- data.frame(position, original)
+```
+
+## Determine the random positions to be mutated
+```{r}
+# generate random numbers between 1 and 11029
+ramdom <- rand_vec <- sample(1:11029, 48)
+# filter the positions to be mutated
+filtered_WNV <- WNV[WNV$position %in% rand_vec, ]
+# mutation probability based on HCV RdRP
+mutation_probs <- list(
+  'A' = c('T'=0.012322789, 'C'=0.003956859, 'G'=0.983720352),
+  'T' = c('A'=0.003956859, 'C'=0.983720352, 'G'=0.012322789),
+  'G' = c('A'=0.960987906, 'T'=0.025507907, 'C'=0.013504186),
+  'C' = c('A'=0.025507907, 'T'=0.960987906, 'G'=0.013504186)
+)
+# function to choose mutation
+mutate_nt <- function(nt) {
+
+  probs <- mutation_probs[[nt]]
+
+  sample(
+    names(probs),
+    size = 1,
+    prob = probs
+  )
+}
+# apply the function to generate mutation accordingly
+filtered_WNV$mutation <- sapply(
+  filtered_WNV$original,
+  mutate_nt
+)
+
+```
+
+## add codon information associated with mutation loci and define the type of mutation
+```{r}
+# function to call codon
+get_codon <- function(pos, seq_vec) {
+# determine codon start position
+  codon_start <- pos - ((pos - 1) %% 3)
+# extract 3 nt
+  codon <- paste0(
+    seq_vec[codon_start:(codon_start + 2)],
+    collapse = ""
+  )
+
+  return(codon)
+}
+
+# apply the function
+filtered_WNV$original_codon <- sapply(
+  filtered_WNV$position,
+  get_codon,
+  seq_vec = original
+)
+
+# function showing mutated codon
+mutate_codon <- function(pos, new_nt, seq_vec) {
+# codon start
+  codon_start <- pos - ((pos - 1) %% 3)
+# original codon as vector
+  codon_vec <- seq_vec[codon_start:(codon_start + 2)]
+# determine position INSIDE codon
+  codon_index <- ((pos - 1) %% 3) + 1
+# replace nucleotide
+  codon_vec[codon_index] <- new_nt
+# collapse back into codon
+  paste0(codon_vec, collapse = "")
+}
+
+# apply it to the data frame
+filtered_WNV$mutated_codon <- mapply(
+  mutate_codon,
+  pos = filtered_WNV$position,
+  new_nt = filtered_WNV$mutation,
+  MoreArgs = list(seq_vec = original)
+)
+
+# make columns showing amino acids
+translate_codon <- function(codon) {
+translate(s2c(codon))
+}
+
+filtered_WNV$original_AA <- sapply(
+  filtered_WNV$original_codon,
+  translate_codon
+)
+
+filtered_WNV$mutant_AA <- sapply(
+  filtered_WNV$mutated_codon,
+  translate_codon
+)
+
+# make column showing the type of mutation
+filtered_WNV$mutation_type <- ifelse(
+  filtered_WNV$mutant_AA == "*",
+  "nonsense",
+  
+  ifelse(
+    filtered_WNV$original_AA ==
+    filtered_WNV$mutant_AA,
+    "synonymous",
+    "non-synonymous"
+  )
+)
+
+## remove amino acid info for the UTR mutations
+utr_positions <- c(10533, 10755)
+
+filtered_WNV[
+  filtered_WNV$position %in% utr_positions,
+  c("original_AA", "mutant_AA", "mutation_type")
+] <- NA
+
+# count the number of synonymous, non-synonymous, and nonsense mutation
+table(filtered_WNV$mutation_type)
+# print the final version
+print(filtered_WNV)
+
+# export into csv
+write.csv(filtered_WNV, 'mutation_summary.csv')
+```
+

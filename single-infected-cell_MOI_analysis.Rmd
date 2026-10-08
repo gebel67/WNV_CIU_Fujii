@@ -1,0 +1,71 @@
+---
+title: "single-infected-cell_MOI_analysis"
+output: html_document
+date: "2025-09-24"
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(DescTools)
+```
+
+
+## Calculate the probability of k = 0 through k = 6 infection (observation + expectation)
+```{r}
+# read the csv file with all the info
+infection_status <- read.csv('single-infected-cell_MOI.csv')
+
+# all infection replicates had MOI < 0.1 based off the ratio of negative and positive cells
+# so, it is safe (conservative) to combine replicates and assume this is from MOI 0.1 infection
+# calculate the probability of k = 0, 1, 2, 3, 4, 5, 6 infections from all replicates
+obs <- colSums(infection_status[, c("k0", "k1", "k2", "k3", "k4", "k5", "k6")]) 
+obs_prob <- obs / sum(obs)                                         # make it a probability  
+obs_prob
+
+# probability under Poisson distribution at lambda = 0.1 (conservative comparison)
+k <- 0:6
+poisson_prob <- dpois(k, 0.1)
+poisson_prob
+
+# probability comparison table
+graph <- cbind(
+  k = k,
+  observed = obs_prob,
+  poisson = poisson_prob
+)
+
+write.csv(graph, 'probability_obs_exp.csv')
+
+```
+## G-test
+```{r}
+# for G test, total counts from observation and expectation must match
+# since k > 6 values in Poisson distribution is negligible, make the last value k >=6 counts
+N <- sum(obs)   # total counts from observation
+
+exp_prob <- c(
+  dpois(0:5, 0.1),
+  ppois(5, 0.1, lower.tail = FALSE)
+)
+
+# from the proabability, calculate the expected cell counts
+exp_count <- N * exp_prob
+
+# G test
+G <- 2 * sum(
+  obs[obs > 0] *
+    log(obs[obs > 0] / exp_count[obs > 0])
+)
+
+# degree of freedom
+df <- length(obs) - 1
+
+# calculate the p_value 
+p_value <- pchisq(G, df = df, lower.tail = FALSE)
+
+G
+df
+p_value
+```
+

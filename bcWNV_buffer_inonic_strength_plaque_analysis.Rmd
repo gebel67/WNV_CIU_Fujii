@@ -1,0 +1,97 @@
+---
+title: "bcWNV_buffer_ionic_strength_plaque_analysis"
+output: html_document
+date: "2026-07-18"
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(dplyr)
+library(stringdist)
+```
+
+## Clean the data by 2x rate in negative sample
+```{r}
+
+# read the csv file
+df <- read.csv('bcWNV_buffer_inonic_strength_plaque.csv')
+
+# Number of negative-control samples within each PBS concentration
+n_neg <- df %>%
+  filter(type == "neg") %>%
+  distinct(PBS_conc, number) %>%
+  count(PBS_conc, name = "n_neg")
+
+# Calculate sequence-specific background rate within each PBS concentration
+neg_cutoffs <- df %>%
+  filter(type == "neg") %>%
+  group_by(PBS_conc, sequence) %>%
+  summarise(
+    neg_counts = sum(count),
+    .groups = "drop"
+  ) %>%
+  left_join(n_neg, by = "PBS_conc") %>%
+  mutate(
+    neg_rate = neg_counts / n_neg,
+    cutoff = 2 * neg_rate
+  )
+
+# Clean the positive samples with minimum count of 2 or 2x negative rate criteria
+df_rate_cleaned <- df %>%
+  filter(type == "pos") %>%
+  left_join(
+    neg_cutoffs,
+    by = c("PBS_conc", "sequence")
+  ) %>%
+  filter(
+    count >= 2,
+    is.na(cutoff) | count >= cutoff
+  )
+```
+
+
+## Merge sequences that are 1nt away from the top sequence of each sample
+```{r}
+
+# merged df named as df_collapsed
+df_collapsed<- df_rate_cleaned %>%
+  group_by(type, PBS_conc, number) %>%                    # group by sample ID
+  mutate(top_seq      = sequence[which.max(count)],       # most abundant sequence
+         dist_to_top  = stringdist(sequence, top_seq, method = "hamming"),  # hamming distance
+         sequence_norm = if_else(dist_to_top == 1L, top_seq, sequence)) %>% # merge if 1 away
+  ungroup() %>%
+  group_by(type, PBS_conc, number, sequence = sequence_norm) %>%  # re-group
+  summarise(count = sum(count), .groups = "drop") %>%
+  arrange(type, PBS_conc, number, desc(count))
+```
+
+
+## Number of unique barcodes per sample
+```{r}
+
+# summary table showing the number of unique barcode per sample
+unique <- df_collapsed %>%
+  group_by(type, PBS_conc, number) %>%    # group by sample ID
+  summarise(n()) %>%                      # length = number of different barcode sequence
+  ungroup()
+
+# write into a csv file
+write.csv(unique, 'unique_barcodes.csv')
+```
+
+
+## Percentage of each barcode within a plaque
+```{r}
+
+# data frame with percentage column
+percent <-df_collapsed %>%
+  group_by(type, PBS_conc, number) %>%    # group by sample ID
+  mutate(total = sum(count)) %>%          # total barcode counts from the given sample
+  mutate(percent = 100*count/total) %>%   # calculate percentage of each barcode
+  ungroup()
+
+# write out into csv file
+write.csv(percent, 'percent.csv')
+```
+

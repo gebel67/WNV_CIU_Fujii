@@ -1,0 +1,153 @@
+---
+title: "bcWNV stock passage data analysis"
+output: html_document
+date: "2026-06-01"
+---
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(magrittr)
+```
+
+
+## Calculate frequency of each barcode
+```{r}
+
+# read the csv file with organized samples
+raw <- read.csv('bcWNV_passage.csv')
+
+# Calculate frequency of each barcode within each positive sample
+freq <- raw %>%
+  mutate(
+    passage = as.numeric(passage),
+    replicate = as.character(replicate)
+  ) %>%
+  group_by(passage, replicate) %>%
+  mutate(freq = count / sum(count, na.rm = TRUE)) %>%
+  ungroup()
+
+# Replicates present in passages 1-3
+reps <- freq %>%
+  filter(passage > 0) %>%
+  pull(replicate) %>%
+  unique() %>%
+  sort()
+
+# Stock sample
+p0 <- freq %>%
+  filter(passage == 0) %>%
+  select(sequence, passage, freq)
+
+# Duplicate the stock into each replicate and combine with later passages
+plot_all <- bind_rows(
+  crossing(
+    p0,
+    replicate = reps
+  ),
+  freq %>%
+    filter(passage > 0) %>%
+    select(sequence, passage, replicate, freq)
+) %>%
+  complete(
+    replicate,
+    passage = 0:3,
+    sequence,
+    fill = list(freq = 0)
+  )
+
+# Check that each passage sums to 1
+plot_all %>%
+  group_by(replicate, passage) %>%
+  summarize(total_freq = sum(freq), .groups = "drop")
+```
+
+
+## Visualization
+```{r}
+
+# Determine barcode plotting order
+barcode_order <- plot_all %>%
+  group_by(sequence) %>%
+  summarize(
+    p0_freq = max(freq[passage == 0]),
+    max_freq = max(freq),
+    .groups = "drop"
+  ) %>%
+  arrange(
+    p0_freq,        
+    p0_freq == 0,   
+    max_freq        
+  ) %>%
+  pull(sequence)
+
+plot_all <- plot_all %>%
+  mutate(
+    sequence = factor(sequence, levels = barcode_order)
+  )
+
+plot_all$sequence <- factor(
+  plot_all$sequence,
+  levels = barcode_order
+)
+
+# color palette
+palette <- c(
+  "#E41A1C",  # red
+  "#377EB8",  # blue
+  "#4DAF4A",  # green
+  "#984EA3",  # purple
+  "#FF7F00",  # orange
+  "#FFFF33",  # yellow
+  "#A65628",  # brown
+  "#F781BF",  # pink
+  "#999999",  # grey
+  "#66C2A5",  # teal
+  "#FC8D62",  # salmon
+  "#8DA0CB"   # lavender
+)
+
+cols <- rep(palette, 2000)
+
+# plot graphs
+for (r in reps) {
+  p <- plot_all %>%
+    filter(replicate == r) %>%
+    ggplot(aes(x = passage, y = freq, fill = sequence, group = sequence)) +
+    geom_area(
+      color = NA,
+      alpha = 1,
+      show.legend = FALSE
+    ) +
+    scale_x_continuous(
+      breaks = c(0, 1, 2, 3),
+      labels = c("stock", "P1", "P2", "P3")
+    ) +
+    scale_y_continuous(
+      limits = c(0, 1),
+      expand = c(0, 0)
+    ) +
+    labs(
+      title = paste("Replicate", r),
+      y = "Frequency"
+    ) +
+    scale_fill_manual(values = cols) +
+    theme_bw() +
+theme(
+  plot.title = element_text(size = 18),
+  axis.title = element_text(size = 16),
+  axis.text = element_text(size = 16),
+  axis.text.x = element_text(angle = 90, hjust = 0.5, vjust = 0.5)
+)
+
+  print(p)
+  ggsave(
+    filename = paste0("Vero_Replicate_", r, ".png"),
+    plot = p,
+    width = 2.6,
+    height = 4,
+    dpi = 600
+  )
+}
+```
+

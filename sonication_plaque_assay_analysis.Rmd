@@ -1,0 +1,107 @@
+---
+title: "sonication_plaque_assay_analysis"
+output: html_document
+date: "2025-08-20"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(dplyr)
+library(stringdist)
+```
+
+
+## Clean the data by 2x rate in negative sample
+```{r}
+
+# read the csv files
+untreated <- read.csv('sonication_plaque_assay_untreated.csv')
+sonicated <- read.csv('sonication_plaque_assay_sonicated.csv')
+
+# clean samples with a cutoff criteria: minimum count of 2 or > 2 x rate in the background
+untreated_rate_cleaned <- untreated %>%
+  filter(type == "neg") %>%                   # only 'neg' samples
+  group_by(sequence) %>%                      # group by unique sequence
+  summarise(rate = sum(counts)/n()) %>%       # average count (aka rate) in 'neg'
+  mutate(cutoff = 2*rate) %>%                 # cutoff = 2x rate
+right_join(untreated %>% filter(type == 'pos')) %>%
+  filter(counts >= cutoff | (is.na(cutoff) & counts >=2))
+
+sonicated_rate_cleaned <- sonicated %>%
+  filter(type == "neg") %>%                   # only 'neg' samples
+  group_by(sequence) %>%                      # group by unique sequence
+  summarise(rate = sum(counts)/n()) %>%       # average count (aka rate) in 'neg'
+  mutate(cutoff = 2*rate) %>%                 # cutoff = 2x rate
+right_join(sonicated %>% filter(type == 'pos')) %>%
+  filter(counts >= cutoff | (is.na(cutoff) & counts >=2))
+
+```
+
+## Merge sequences that are 1nt away from the top sequence of each sample
+```{r}
+
+# merged df named as df_collapsed_ctrl
+df_collapsed_untreated <- untreated_rate_cleaned %>%
+  group_by(type, number) %>%                           # group by sample ID
+  mutate(top_seq      = sequence[which.max(counts)],   # most abundant sequence
+         dist_to_top  = stringdist(sequence, top_seq, method = "hamming"),  # hamming distance
+         sequence_norm = if_else(dist_to_top == 1L, top_seq, sequence)) %>% # merge if 1 away
+  ungroup() %>%
+  group_by(type, number, sequence = sequence_norm) %>%  # re-group
+  summarise(counts = sum(counts), .groups = "drop") %>%
+  arrange(type, number, desc(counts))
+
+df_collapsed_sonicated <- sonicated_rate_cleaned %>%
+  group_by(type, number) %>%                           # group by sample ID
+  mutate(top_seq      = sequence[which.max(counts)],   # most abundant sequence
+         dist_to_top  = stringdist(sequence, top_seq, method = "hamming"),  # hamming distance
+         sequence_norm = if_else(dist_to_top == 1L, top_seq, sequence)) %>% # merge if 1 away
+  ungroup() %>%
+  group_by(type, number, sequence = sequence_norm) %>%  # re-group
+  summarise(counts = sum(counts), .groups = "drop") %>%
+  arrange(type, number, desc(counts))
+```
+
+
+## Number of unique barcodes per sample
+```{r}
+# summary table showing the number of unique barcode per sample
+unique_untreated <- df_collapsed_untreated %>%
+  group_by(type, number) %>%
+  summarise(n()) %>%
+  ungroup()
+
+unique_sonicated <- df_collapsed_sonicated %>%
+  group_by(type, number) %>%
+  summarise(n()) %>%
+  ungroup()
+
+# write out into csv files
+write.csv(unique_untreated, 'unique_untreated.csv')
+write.csv(unique_sonicated, 'unique_sonicated.csv')
+```
+
+
+## Percentage of each barcode within a well
+```{r}
+
+# data frame with percentage column
+percent_untreated <-df_collapsed_untreated %>%
+  group_by(type, number) %>%             # group by sample ID
+  mutate(total = sum(counts)) %>%        # total barcode counts from the given sample
+  mutate(percent = 100*counts/total) %>% # calculate percentage of each barcode
+  ungroup()
+
+percent_sonicated <-df_collapsed_sonicated %>%
+  group_by(type, number) %>%             # group by sample ID
+  mutate(total = sum(counts)) %>%        # total barcode counts from the given sample
+  mutate(percent = 100*counts/total) %>% # calculate percentage of each barcode
+  ungroup()
+
+# write out into csv files
+write.csv(percent_untreated, 'percent_untreated.csv')
+write.csv(percent_sonicated, 'percent_sonicated.csv')
+```
+
+

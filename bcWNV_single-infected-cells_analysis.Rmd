@@ -1,0 +1,73 @@
+---
+title: "bcWNV_single-infected-cell_analysis"
+output: html_document
+date: "2025-08-20"
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(dplyr)
+library(stringdist)
+```
+
+
+## Clean the data by 2x rate in negative sample
+```{r}
+
+# read the file
+df <- read.csv('bcWNV_single-infected-cell.csv')
+
+# clean samples with a cutoff criteria: minimum count of 2 or > 2 x rate in the background
+rate_cleaned <- df %>%
+  filter(type == "neg") %>%                   # only 'neg' samples
+  group_by(sequence) %>%                      # group by unique sequence
+  summarise(rate = sum(counts)/n()) %>%       # average count (aka rate) in 'neg'
+  mutate(cutoff = 2*rate) %>%                 # cutoff = 2x rate
+right_join(df %>% filter(type == 'pos')) %>%
+  filter(counts >= cutoff | (is.na(cutoff) & counts >=2))
+```
+
+
+## Merge sequences that are 1nt away from the top sequence of each sample
+```{r}
+df_collapsed <- rate_cleaned %>%
+  group_by(type, replicate, cell) %>%                # group by sample ID
+  mutate(top_seq      = sequence[which.max(counts)], # most abundant sequence
+         dist_to_top  = stringdist(sequence, top_seq, method = "hamming"),  # hamming distance
+         sequence_norm = if_else(dist_to_top == 1L, top_seq, sequence)) %>% # merge if 1 away
+  ungroup() %>%
+  group_by(type, replicate, cell, sequence = sequence_norm) %>%  # re-group
+  summarise(counts = sum(counts), .groups = "drop") %>%
+  arrange(type, replicate, cell, desc(counts))
+```
+
+
+## Number of unique barcodes per sample
+```{r}
+
+# summary table showing the number of unique barcode per sample
+unique <- df_collapsed %>%
+  group_by(type, replicate, cell) %>%    # group by sample ID
+  summarise(n()) %>%                     # length = number of different barcode sequence
+  ungroup()
+
+# write out into a csv file
+write.csv(unique, 'unique_barcodes.csv')
+```
+
+
+## Percentage of each barcode within a well
+```{r}
+
+# data frame with percentage column
+percent <-df_collapsed %>%
+  group_by(type, replicate, cell) %>%     # group by sample ID
+  mutate(total = sum(counts)) %>%         # total barcode counts from the given sample
+  mutate(percent = 100*counts/total) %>%  # calculate percentage of each barcode
+  ungroup()
+
+# write out into a csv file
+write.csv(percent, 'percent.csv')
+```
+

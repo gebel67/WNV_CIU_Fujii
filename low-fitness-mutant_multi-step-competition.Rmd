@@ -1,0 +1,57 @@
+---
+title: "low-fitness-mutant_multi-step-competition_analysis"
+output: html_document
+date: "2025-09-10"
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(dplyr)
+library(stringdist)
+```
+
+## Merge sequences that are 1nt away from the reference barcodes
+```{r}
+# read the csv file
+df <- read.csv('low-fitness-mutant_multi-step-competition.csv')
+
+# reference sequences
+ refs <- c(
+   WT       = "CTCACAGTCACCGTGACCGCTGCGACCCTACTT",
+  `NS3 S412A` = "CTGACCGTAACGGTCACCGCGGCAACTCTACTG",
+  `NS5 F24A`  = "CTGACCGTCACTGTAACTGCCGCTACTCTCCTT",
+  `NS5 E34A`  = "CTGACCGTGACGGTTACTGCGGCTACCCTGCTT"
+)
+
+# Calculate distance of every observed sequence from each reference
+d <- stringdistmatrix(
+  df$sequence,
+  refs,
+  method = "hamming"
+)
+
+# Assign sequences to a reference if they are <= 1 nt different
+df$barcode <- apply(d, 1, function(x) {
+  if (min(x) <= 1) {
+    names(refs)[which.min(x)]
+  } else {
+    NA_character_
+  }
+})
+
+# Merge sequences if 1nt away and remove those that are further than 1nt from the references
+df_merged <- df %>%
+  filter(!is.na(barcode)) %>%
+  group_by(cell, replicate, virus, in_out, barcode) %>%
+  summarise(count = sum(count), .groups = "drop")
+
+# Calculate the percentage of each variant within a sample
+df_percent <- df_merged %>%
+  group_by(cell, replicate, virus, in_out) %>%
+  mutate(total = sum(count)) %>%
+  mutate(percent = 100*count/total)
+
+# write out into a csv file
+write.csv(df_percent, 'cleaned_sequences.csv')
+```
